@@ -7,7 +7,7 @@
 // Usage:
 //   node juejin_publish.cjs --content-file /abs/article.md                 # PREPARE: fill title+body, no publish
 //   node juejin_publish.cjs --content-file /abs/article.md --post          # real publish (opens drawer → 确定并发布)
-//   Optional: --title "自定义标题"  --category "前端"  --tags "React,性能优化"  --summary "..."  --column "我的专栏"
+//   Optional: --title "自定义标题"  --category "人工智能"  --tags "机器学习"  --summary "50-100 字摘要"  --column "我的专栏"
 //
 // Juejin editor is markdown-native: we strip frontmatter and feed the body Markdown verbatim.
 const { chromium } = require('playwright/test');
@@ -29,6 +29,8 @@ const exe = resolveChromium;
 function log(s) { fs.appendFileSync(path.join(OUT, 'juejin_publish.txt'), s + '\n'); }
 const NOTIFY = path.resolve(ROOT, '..', '..', 'wechat-mp-publish', 'scripts', 'notify_lark.cjs');
 function notifyLark(msg) { try { execFileSync('node', [NOTIFY, msg], { timeout: 30000, stdio: 'ignore' }); } catch (_) {} }
+function charLen(s) { return Array.from(s || '').length; }
+function clipChars(s, n) { return Array.from(s || '').slice(0, n).join(''); }
 // Pull `title` out of YAML frontmatter, then strip the whole frontmatter block from the body.
 function parseFM(md) { const m = md.match(/^﻿?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n/); const a = {}; if (m) for (const line of m[1].split(/\r?\n/)) { const mm = line.match(/^\s*([A-Za-z0-9_.\-]+)\s*:\s*(.*)$/); if (mm) a[mm[1].toLowerCase()] = mm[2].trim().replace(/^["']|["']$/g, ''); } return a; }
 function stripFM(md) { return md.replace(/^﻿?---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n/, ''); }
@@ -43,10 +45,22 @@ function stripFM(md) { return md.replace(/^﻿?---[ \t]*\r?\n[\s\S]*?\r?\n---[ \
   let title = arg('--title', attrs.title || '');
   title = title.slice(0, 100); // keep titles sane (Juejin allows long titles; 100 is a safe cap)
   const category = arg('--category', '');
-  const tags = (arg('--tags', '') || '').split(',').map((s) => s.trim()).filter(Boolean);
-  const summary = arg('--summary', '');
+  let tags = (arg('--tags', '') || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (tags.length > 1) {
+    log(`WARN: Juejin only accepts one stable tag in this workflow; using first tag "${tags[0]}" and ignoring ${JSON.stringify(tags.slice(1))}`);
+    tags = tags.slice(0, 1);
+  }
+  let summary = (arg('--summary', '') || '').trim();
+  if (charLen(summary) > 100) {
+    summary = clipChars(summary, 100);
+    log('WARN: summary truncated to 100 chars for Juejin');
+  }
+  if (POST && charLen(summary) < 50) {
+    log(`ERROR: Juejin --post requires --summary with at least 50 chars; got ${charLen(summary)}.`);
+    process.exit(2);
+  }
   const column = arg('--column', '');
-  log(`title="${title}" titleLen=${title.length} mdBytes=${body.length} category="${category}" tags=${JSON.stringify(tags)} column="${column}"`);
+  log(`title="${title}" titleLen=${title.length} mdBytes=${body.length} category="${category}" tags=${JSON.stringify(tags)} column="${column}" summaryLen=${charLen(summary)}`);
 
   const ctx = await chromium.launchPersistentContext(userDataDir, { headless: false, viewport: { width: 1440, height: 900 }, executablePath: exe() });
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: ORIGIN }).catch(() => {});
@@ -162,6 +176,8 @@ function stripFM(md) { return md.replace(/^﻿?---[ \t]*\r?\n[\s\S]*?\r?\n---[ \
       await page.waitForTimeout(500);
     } catch (e) { log('tag err ' + e.message); }
   }
+  await page.keyboard.press('Escape').catch(() => {});
+  await page.waitForTimeout(500);
 
   // 3.4) summary (optional): 摘要 textarea
   if (summary) {
@@ -198,7 +214,21 @@ function stripFM(md) { return md.replace(/^﻿?---[ \t]*\r?\n[\s\S]*?\r?\n---[ \
   // B) coordinate click near the drawer's bottom-right confirm button
   if (!posted && process.env.JUEJIN_COORD_CLICK !== '0') {
     const vw = page.viewportSize() || { width: 1440, height: 900 };
-    for (const [x, y] of [[vw.width - 90, vw.height - 40], [vw.width - 120, vw.height - 55]]) {
+    const domBox = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('button, [role="button"]')]
+        .filter((e) => /确定并发布/.test((e.innerText || e.textContent || '').trim()))
+        .filter((e) => {
+          const r = e.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        })
+        .sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom)[0];
+      if (!b) return null;
+      const r = b.getBoundingClientRect();
+      return [r.left + r.width / 2, r.top + r.height / 2];
+    }).catch(() => null);
+    const points = domBox ? [domBox] : [];
+    points.push([vw.width - 150, vw.height - 68], [vw.width - 90, vw.height - 40], [vw.width - 120, vw.height - 55]);
+    for (const [x, y] of points) {
       try { await page.mouse.click(x, y); log(`coord-click (${x},${y})`); } catch (_) {}
       await page.waitForTimeout(2500);
       if (await isPosted()) { posted = true; break; }

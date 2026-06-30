@@ -7,7 +7,7 @@
 //
 // Usage:
 //   node publish-cli.mjs <platform> --file <md> [--post] [--title "..."] [--theme ..] [--help]
-//   platform ∈ wechat | xiaohongshu | zhihu | all | wechat-send
+//   platform ∈ wechat | xiaohongshu | zhihu | csdn | juejin | all | wechat-send
 
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -31,7 +31,7 @@ const PLATFORMS = ['wechat', 'xiaohongshu', 'zhihu', 'csdn', 'juejin', 'all', 'w
 
 // Flags that take a value vs. boolean switches.
 const VALUE_FLAGS = new Set([
-  'file', 'title', 'theme', 'hl-theme', 'url', 'digest', 'author',
+  'file', 'title', 'theme', 'hl-theme', 'url', 'digest', 'cover-prompt', 'author',
   'content-source-url', 'user-data-dir', 'appmsgid', 'topic', 'out',
   'tags', 'column', 'summary', 'category',
 ]);
@@ -122,6 +122,7 @@ function runWechat(opts, { withinAll = false } = {}) {
   if (opts.theme) args.push('--theme', opts.theme);
   if (opts['hl-theme']) args.push('--hl-theme', opts['hl-theme']);
   if (opts.digest) args.push('--digest', opts.digest);
+  if (opts['cover-prompt']) args.push('--cover-prompt', opts['cover-prompt']);
   if (opts.author) args.push('--author', opts.author);
   if (opts['content-source-url']) args.push('--content-source-url', opts['content-source-url']);
   if (opts['user-data-dir']) args.push('--user-data-dir', opts['user-data-dir']);
@@ -378,7 +379,7 @@ platform:
   --help, -h             显示本帮助
 
 按平台透传的选项:
-  wechat:       --theme --hl-theme --url --no-cover --digest --author
+  wechat:       --theme --hl-theme --url --no-cover --digest --cover-prompt --author
                 --content-source-url --reflow --user-data-dir
                 (--url 可代替 --file 抓网页正文；二者互斥)
   wechat-send:  --appmsgid <id>   设到 env APPMSGID(指定要群发的草稿)
@@ -386,10 +387,10 @@ platform:
   xiaohongshu:  --theme(literary|blue) --out <卡片输出目录>
   zhihu:        --topic <话题>(仅 --post 时尝试添加)
   csdn:         --tags a,b,c  --column "分类专栏"  --summary "摘要"
-  juejin:       --category "分类"  --tags a,b,c  --column "专栏"  --summary "摘要"
+  juejin:       --category "分类"  --tags 单个标签  --column "专栏"  --summary "50-100 字摘要"
 
 示例(均不真发):
-  node publish-cli.mjs wechat --file post.md --theme lapis
+  node publish-cli.mjs wechat --file post.md --theme lapis --cover-prompt "故事高光画面..." --digest "摘要高光句..."
   node publish-cli.mjs xiaohongshu --file post.md
   node publish-cli.mjs zhihu --file post.md
   node publish-cli.mjs all --file post.md

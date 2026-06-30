@@ -69,12 +69,12 @@ node scripts/csdn_publish.cjs --content-file /abs/article.md --post \
 
 | 元素 | 选择器 / 位置 | 说明 |
 | --- | --- | --- |
-| 标题 | `input[placeholder*="请输入文章标题"]`（位于 `.article-bar` 内） | 普通 `<input>`，可 `fill`；≤~100 字 |
+| 标题 | `.article-bar__title-display` / `.article-bar__input-box`（先展示）→ 点击后出现 `input[placeholder*="请输入文章标题"], input.article-bar__title--input` | 新版 CSDN 标题不是一开始就是 input；需先点展示区再 fill；≤~100 字 |
 | 正文编辑器 | `.editor`(容器) > `.cledit-section` | **cledit contenteditable**(markdown 源码)，非 textarea、非 CodeMirror |
 | 发布(顶栏) | `button.btn-publish`，文案「发布文章」 | 点开发布面板(modal) |
 | 文章标签 | `button.tag__btn-tag`「添加文章标签」→ `.mark_selection_box input[placeholder*="搜索"]` → 选候选/回车 → `button[title="关闭"]` | ⚠ best-effort |
 | 分类专栏 | 面板内 `input[type="checkbox"]` + 同行专栏名文本 | ⚠ 按专栏名文本匹配后勾选 |
-| 摘要 | `.desc-box textarea[placeholder*="摘要"]` | ⚠ 可 `fill` |
+| 摘要 | 发布面板内 `textarea.el-textarea__inner`，placeholder 含「展现列表」「正文前256个字」 | 新版 DOM 实测；用 placeholder 语义匹配比 class 稳 |
 | 封面 | `input[type="file"]` | ⚠ 当前脚本不传封面 |
 | 文章类型 / 可见范围 | 面板内 radio | 默认「原创」「全部可见」，脚本**不改默认** |
 | 发布(面板) | `.modal__button-bar button`，文案「发布文章」 | ⚠ 真实 DOM `<button>`，最终确认 |
@@ -86,6 +86,8 @@ node scripts/csdn_publish.cjs --content-file /abs/article.md --post \
 - **粘贴兜底**：剪贴板粘贴若没进(textLen 太小)，回退 `keyboard.insertText(body)`(单次 input 事件、瞬时、不触发逐字 markdown 自动格式化)。需要 `ctx.grantPermissions(['clipboard-read','clipboard-write'],{origin:'https://editor.csdn.net'})`。
 - **frontmatter**：脚本自己正则 strip frontmatter(`/^﻿?---\n[\s\S]*?\n---\n/`)，只把正文喂进编辑器；`title` 从 frontmatter 取。
 - **「发布文章」有两个**：顶栏触发(`button.btn-publish`)和面板确认(`.modal__button-bar` 内)文案都是「发布文章」。脚本找**最终确认**时**限定在 modal 内**，别误点顶栏那个。
+- **新版标题 DOM**：如果标题 input 不可见，不要直接判未登录；先看 `.article-bar__title-display`/`.article-bar__input-box` 和 markdown 编辑器是否存在，再点击标题展示区打开 input。
+- **新版发布面板 DOM**：发布弹窗根节点常见为 `modal__inner-1 modal__publish-article`；摘要 textarea 是 `textarea.el-textarea__inner`，placeholder 文案为「本内容会在各展现列表中展示...若不填，则默认提取正文前256个字。」；最终按钮为 `button.btn-b-red` 文案「发布文章」。
 - **三级兜底发布**：locator 点面板「发布文章」→ 坐标点(模板右下，坐标**近似、待核对**，`CSDN_COORD_CLICK=0` 可关)→ 都不行则 `notifyLark('【CSDN·待发布】...editor.csdn.net/md/')` 并保持窗口让人工点(轮询 ≤300s)。
 - **判成功**：url 变文章详情 `blog.csdn.net/<user>/article/details/<id>`，或 `mp.csdn.net/.../success`，或页面出现「发布成功/发表成功」。
 - **PREPARE 是默认**：不传 `--post` 只填不发，保持窗口给人审核(`CSDN_PREPARE_HOLD` 秒)。发布对外不可撤，务必人工确认后再 `--post`。

@@ -91,6 +91,24 @@ async function fillBody(page, body) {
   return ok;
 }
 
+async function openTitleInput(page) {
+  const input = page.locator('input[placeholder*="请输入文章标题"], input[placeholder*="标题"], input.article-bar__title--input').first();
+  if (await input.isVisible().catch(() => false)) return input;
+  const display = page.locator('.article-bar__title-display, .article-bar__input-box').first();
+  if (await display.isVisible().catch(() => false)) {
+    await display.click().catch((e) => log('title display click err ' + e.message));
+    await page.waitForTimeout(300);
+  }
+  return input;
+}
+
+async function hasWriteEditor(page) {
+  const titleInput = await page.locator('input[placeholder*="请输入文章标题"], input[placeholder*="标题"], input.article-bar__title--input').first().isVisible().catch(() => false);
+  const titleDisplay = await page.locator('.article-bar__title-display, .article-bar__input-box').first().isVisible().catch(() => false);
+  const editor = await page.locator('.cledit-section, .editor__inner[contenteditable="true"], .editor').first().isVisible().catch(() => false);
+  return (titleInput || titleDisplay) && editor && !/passport\.csdn\.net|\/login/i.test(page.url());
+}
+
 // ---- PREPARE: keep the window open so a human can review (break early if they close it) ----
 async function holdForReview(ctx, page, seconds) {
   for (let i = 0; i < Math.ceil(seconds / 2); i += 1) {
@@ -137,15 +155,51 @@ async function addTags(page, tags) {
 
 // Click the modal's confirm "发布文章" (scoped to the modal button bar so it's not the top-bar trigger).
 async function clickFinalPublish(page) {
-  const btn = page.locator('.modal__button-bar button:has-text("发布文章"), [class*="modal"] button:has-text("发布文章")').last();
+  const btn = page.locator('button.btn-b-red:has-text("发布文章"), .modal__button-bar button:has-text("发布文章"), [class*="modal"] button:has-text("发布文章"), .el-dialog button:has-text("发布文章")').last();
   if (await btn.isVisible().catch(() => false)) { await btn.click().catch(() => {}); return true; }
-  return page.evaluate(() => {
-    const bar = document.querySelector('.modal__button-bar') || document.querySelector('[class*="modal"]');
-    if (!bar) return false;
-    const b = [...bar.querySelectorAll('button')].find((e) => /发布文章/.test(e.innerText || ''));
-    if (b) { b.click(); return true; }
-    return false;
+  const box = await page.evaluate(() => {
+    const roots = [...document.querySelectorAll('.modal__button-bar, [class*="modal"], .el-dialog, [role="dialog"]')];
+    const scope = roots.length ? roots : [document];
+    const candidates = scope.flatMap((root) => [...root.querySelectorAll('button, [role="button"]')])
+      .filter((e) => /发布文章/.test((e.innerText || e.textContent || '').trim()))
+      .filter((e) => {
+        const r = e.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      })
+      .sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom);
+    const b = candidates[0];
+    if (!b) return null;
+    const r = b.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   }).catch(() => false);
+  if (box) {
+    await page.mouse.click(box.x, box.y).catch(() => {});
+    return true;
+  }
+  return false;
+}
+
+async function fillSummary(page, summary) {
+  return page.evaluate((text) => {
+    const visible = (el) => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    };
+    const roots = [...document.querySelectorAll('.desc-box, [role="dialog"], [class*="modal"], .el-dialog')];
+    const scope = roots.length ? roots : [document];
+    const candidates = scope.flatMap((root) => [...root.querySelectorAll('textarea')])
+      .filter(visible)
+      .filter((el) => /摘要|展现列表|正文前256/.test(`${el.placeholder || ''} ${el.closest('.desc-box')?.innerText || ''}`));
+    const ta = candidates[0];
+    if (!ta) return false;
+    ta.focus();
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    if (setter) setter.call(ta, text);
+    else ta.value = text;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    ta.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  }, summary).catch(() => false);
 }
 
 (async () => {
@@ -169,9 +223,9 @@ async function clickFinalPublish(page) {
   await page.waitForTimeout(4000);
   log('url=' + page.url());
 
-  // Login check: the write page must show the title input; otherwise we are not logged in.
-  const titleBox = page.locator('input[placeholder*="请输入文章标题"], input[placeholder*="标题"]').first();
-  if (!(await titleBox.isVisible().catch(() => false))) {
+  // Login check: the write page must show the title area and markdown editor. New CSDN
+  // renders the title as a display div until clicked, then swaps in an input.
+  if (!(await hasWriteEditor(page))) {
     log('NOT LOGGED IN — run `node csdn_login.cjs` and scan the QR first. url=' + page.url());
     await page.screenshot({ path: path.join(OUT, 'csdn_pub_notlogged.png') }).catch(() => {});
     await ctx.close();
@@ -179,7 +233,12 @@ async function clickFinalPublish(page) {
   }
 
   // 1) Title.
-  try { await titleBox.click(); await titleBox.fill(title); log('title filled'); } catch (e) { log('title err ' + e.message); }
+  try {
+    const titleBox = await openTitleInput(page);
+    await titleBox.click();
+    await titleBox.fill(title);
+    log('title filled');
+  } catch (e) { log('title err ' + e.message); }
 
   // 2) Body (raw markdown into the cledit editor).
   const bodyOk = await fillBody(page, body);
@@ -223,8 +282,8 @@ async function clickFinalPublish(page) {
   if (tags.length) { try { await addTags(page, tags); } catch (e) { log('tags err ' + e.message); } }
   if (summary) {
     try {
-      const sm = page.locator('.desc-box textarea, textarea[placeholder*="摘要"]').first();
-      if (await sm.isVisible().catch(() => false)) { await sm.fill(summary); log('summary filled'); }
+      const done = await fillSummary(page, summary);
+      log('summary filled: ' + done);
     } catch (e) { log('summary err ' + e.message); }
   }
   await page.waitForTimeout(500);
