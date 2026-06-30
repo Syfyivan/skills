@@ -1,0 +1,8 @@
+{
+  "_comment": "系列 → 公众号主题映射。match 命中文章 frontmatter 的 categories/title/tags 任一即生效，按顺序取第一个命中；都不中用 default。命令行 --theme 优先级最高。",
+  "rules": [
+    { "match": "大寓言课", "theme": "literary", "hl": "github" },
+    { "match": "AI 与 Agent", "theme": "literary", "hl": "github" }
+  ],
+  "default": { "theme": "lapis", "hl": "github" }
+}

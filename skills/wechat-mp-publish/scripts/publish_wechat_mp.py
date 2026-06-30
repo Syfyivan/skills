@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -30,8 +31,15 @@ PUBLISH_STATUS_LABELS = {
     6: "banned_after_publish",
 }
 
-ROOT_DIR = Path(__file__).resolve().parents[4]
+ROOT_DIR = Path(__file__).resolve().parents[3]
 WEB_SPEC_PATH = Path(__file__).with_name("publish_wechat_mp_web.spec.js")
+WENYAN_RENDERER = Path(__file__).with_name("render_wenyan.mjs")
+URL_RENDERER = Path(__file__).with_name("url_to_markdown.mjs")
+FRONT_MATTER_RE = re.compile(r"^﻿?---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n", re.S)
+LARK_IMAGE_TAG_RE = re.compile(r"<image\b([^>]*)/>", re.I)
+LARK_FILE_TAG_RE = re.compile(r"(?s)<view\b[^>]*>\s*<file\b([^>]*)/>\s*</view>", re.I)
+LARK_WHITEBOARD_TAG_RE = re.compile(r"<whiteboard\b([^>]*)/>", re.I)
+LARK_ATTR_RE = re.compile(r'([a-zA-Z_:][a-zA-Z0-9_.:-]*)="([^"]*)"')
 
 
 class WeChatPublishError(RuntimeError):
@@ -43,6 +51,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--title", help="Article title")
     parser.add_argument("--content", help="Inline article content")
     parser.add_argument("--content-file", help="Path to a file containing article content")
+    parser.add_argument("--doc-url", help="Feishu/Lark doc or wiki url")
+    parser.add_argument("--url", help="博客/网页链接：抓取正文并转为 Markdown 后再发布")
+    parser.add_argument("--reflow", action="store_true", help="HTML 输入时先经 readability+turndown 转 Markdown 再套用主题排版")
+    parser.add_argument("--no-cover", action="store_true", help="跳过 AI 封面生成(只更新标题/正文/样式)")
     parser.add_argument(
         "--publish-mode",
         choices=("auto", "web", "api"),
@@ -66,9 +78,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--digest", default="", help="Article digest")
     parser.add_argument("--content-source-url", default="", help="Original source URL")
     parser.add_argument("--cover-prompt", default="", help="Prompt for AI cover generation in web mode")
+    parser.add_argument("--theme", help="公众号 排版主题 id (wenyan-core)，如 default/lapis/orangeheart/rainbow")
+    parser.add_argument("--hl-theme", help="代码高亮主题 id (wenyan-core)，如 github/atom-one-dark/dracula")
+    parser.add_argument("--list-themes", action="store_true", help="列出可用的 wenyan 排版/高亮主题后退出")
     parser.add_argument("--render-only", action="store_true", help="Render the content to HTML and print it")
     parser.add_argument("--keep-browser", action="store_true", help="Keep browser open after web automation")
-    parser.add_argument("--browser-channel", default="chrome", help="Browser channel for Playwright web mode")
+    parser.add_argument("--browser-channel", default="", help="Playwright 浏览器 channel；留空=用自带 Chromium（与你的 Chrome 完全隔离），也可设 chrome/msedge")
     parser.add_argument("--user-data-dir", help="Persistent browser profile directory for web mode login reuse")
     parser.add_argument(
         "--need-open-comment",
@@ -89,10 +104,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def read_source(args: argparse.Namespace) -> Tuple[str, Optional[Path]]:
-    if bool(args.content) == bool(args.content_file):
-        raise WeChatPublishError("必须且只能提供 --content 或 --content-file 其中一种")
+def validate_input_source(args: argparse.Namespace) -> None:
+    provided_count = sum(bool(value) for value in (args.content, args.content_file, args.doc_url, args.url))
+    if provided_count != 1:
+        raise WeChatPublishError("必须且只能提供 --content、--content-file、--doc-url、--url 其中一种")
 
+
+def read_source(args: argparse.Namespace) -> Tuple[str, Optional[Path]]:
     source_path = Path(args.content_file) if args.content_file else None
     if args.content and args.content_format == "pdf":
         raise WeChatPublishError("PDF 模式仅支持 --content-file，请传入 PDF 文件路径")
@@ -116,6 +134,11 @@ def read_content(args: argparse.Namespace) -> Tuple[str, str, Optional[Path], Op
     content, source_path = read_source(args)
 
     content_format = detect_content_format(content, args.content_format, source_path)
+
+    reflow = getattr(args, "reflow", False) or os.getenv("WECHAT_MP_REFLOW", "").strip() == "1"
+    if content_format == "html" and reflow:
+        converted = html_to_markdown(content)
+        return converted, markdown_to_wechat_html(converted), source_path, None
 
     if content_format == "pdf":
         raw_text, rendered_html, pdf_title = pdf_to_wechat_html(source_path)
@@ -158,8 +181,28 @@ def resolve_title(args: argparse.Namespace, raw_content: str, source_path: Optio
     raise WeChatPublishError("无法推断标题，请显式传入 --title")
 
 
+def parse_front_matter(content: str) -> Tuple[Dict[str, str], str]:
+    match = FRONT_MATTER_RE.match(content)
+    if not match or ":" not in match.group(1):
+        return {}, content
+    attrs: Dict[str, str] = {}
+    for line in match.group(1).splitlines():
+        pair = re.match(r"^\s*([A-Za-z0-9_.\-]+)\s*:\s*(.*)$", line)
+        if pair:
+            attrs[pair.group(1).strip().lower()] = pair.group(2).strip().strip('"').strip("'").strip()
+    return attrs, content[match.end():]
+
+
+def strip_front_matter(content: str) -> str:
+    return parse_front_matter(content)[1]
+
+
 def extract_title_from_markdown(content: str) -> str:
-    for line in content.splitlines():
+    attrs, body = parse_front_matter(content)
+    if attrs.get("title"):
+        return cleanup_markdown_text(attrs["title"])
+
+    for line in body.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
@@ -167,7 +210,7 @@ def extract_title_from_markdown(content: str) -> str:
         if match:
             return cleanup_markdown_text(match.group(1))
 
-    for line in content.splitlines():
+    for line in body.splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith(("```", "- ", "* ", "> ")):
             return cleanup_markdown_text(stripped)
@@ -187,6 +230,43 @@ def build_digest(html_content: str, limit: int = 120) -> str:
     plain = re.sub(r"<[^>]+>", " ", plain)
     plain = html.unescape(re.sub(r"\s+", " ", plain)).strip()
     return plain[:limit]
+
+
+def resolve_digest(args: argparse.Namespace, raw_content: str, html_content: str) -> str:
+    """摘要优先级：显式 --digest > 文章 frontmatter description > 正文截取兜底。"""
+    if args.digest and args.digest.strip():
+        return args.digest.strip()
+    attrs, _ = parse_front_matter(raw_content)
+    description = attrs.get("description", "").strip()
+    if description:
+        return description[:120]
+    return build_digest(html_content)
+
+
+def load_series_theme_config() -> Dict[str, Any]:
+    config_path = Path(__file__).with_name("series_theme.json")
+    if config_path.exists():
+        try:
+            return json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {
+        "rules": [{"match": "大寓言课", "theme": "literary", "hl": "github"}],
+        "default": {"theme": "lapis", "hl": "github"},
+    }
+
+
+def resolve_series_theme(raw_content: str) -> Tuple[str, str]:
+    """按文章 frontmatter(categories/title/tags) 匹配系列，返回 (theme, hl)。"""
+    config = load_series_theme_config()
+    attrs, _ = parse_front_matter(raw_content)
+    haystack = " ".join(str(attrs.get(key, "")) for key in ("categories", "title", "tags"))
+    for rule in config.get("rules", []):
+        match = rule.get("match")
+        if match and match in haystack:
+            return rule.get("theme", ""), rule.get("hl", "")
+    default = config.get("default", {})
+    return default.get("theme", ""), default.get("hl", "")
 
 
 def pdf_to_wechat_html(source_path: Optional[Path]) -> Tuple[str, str, Optional[str]]:
@@ -242,6 +322,174 @@ def normalize_pdf_text(text: str) -> str:
     return normalized.strip()
 
 
+def run_external_command(command: list[str]) -> str:
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError as exc:
+        raise WeChatPublishError(f"缺少依赖命令：{command[0]}") from exc
+
+    stdout = (completed.stdout or "").strip()
+    stderr = (completed.stderr or "").strip()
+    if completed.returncode != 0:
+        message = stderr or stdout or f"命令执行失败: {' '.join(command)}"
+        raise WeChatPublishError(message)
+    return stdout
+
+
+def parse_json_output(text: str) -> Dict[str, Any]:
+    stripped = text.strip()
+    if not stripped:
+        raise WeChatPublishError("外部命令未返回有效 JSON")
+    candidates = [stripped]
+    match = re.search(r"(\{[\s\S]*\})\s*$", stripped)
+    if match:
+        candidates.append(match.group(1))
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    raise WeChatPublishError("无法解析外部命令返回的 JSON")
+
+
+def parse_tag_attributes(attrs_text: str) -> Dict[str, str]:
+    return {key: value for key, value in LARK_ATTR_RE.findall(attrs_text)}
+
+
+def fetch_lark_doc(doc_url: str) -> Tuple[str, str]:
+    response = parse_json_output(
+        run_external_command(
+            [
+                "lark-cli",
+                "docs",
+                "+fetch",
+                "--doc",
+                doc_url,
+                "--format",
+                "json",
+            ]
+        )
+    )
+    payload = response.get("data") if isinstance(response.get("data"), dict) else response
+    markdown = str(payload.get("markdown") or payload.get("content") or "").strip()
+    title = str(payload.get("title") or "").strip()
+    if not markdown:
+        raise WeChatPublishError("飞书文档抓取成功，但未返回 markdown 正文")
+    return markdown, title
+
+
+def resolve_downloaded_media_path(target_path: Path) -> Path:
+    if target_path.exists():
+        return target_path
+    matches = sorted(path for path in target_path.parent.glob(f"{target_path.name}*") if path.is_file())
+    if not matches:
+        raise WeChatPublishError(f"未找到下载后的飞书素材文件: {target_path.name}")
+    return matches[0]
+
+
+def download_lark_media(token: str, asset_dir: Path, basename: str) -> Path:
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    target_path = asset_dir / basename
+    run_external_command(
+        [
+            "lark-cli",
+            "docs",
+            "+media-download",
+            "--token",
+            token,
+            "--output",
+            str(target_path),
+        ]
+    )
+    return resolve_downloaded_media_path(target_path).resolve()
+
+
+def render_lark_file_reference(attrs_text: str) -> str:
+    attrs = parse_tag_attributes(attrs_text)
+    name = attrs.get("name") or attrs.get("token") or "附件"
+    return f"\n\n[附件：{name}]\n\n"
+
+
+def render_lark_whiteboard_reference(attrs_text: str) -> str:
+    attrs = parse_tag_attributes(attrs_text)
+    token = attrs.get("token") or "unknown"
+    return f"\n\n[画板：{token}]\n\n"
+
+
+def materialize_lark_doc_assets(markdown: str, asset_dir: Path) -> str:
+    token_to_path: Dict[str, Path] = {}
+
+    def replace_image(match: re.Match[str]) -> str:
+        attrs = parse_tag_attributes(match.group(1))
+        token = attrs.get("token", "").strip()
+        if not token:
+            return ""
+        if token not in token_to_path:
+            token_to_path[token] = download_lark_media(token, asset_dir, f"image-{len(token_to_path) + 1}")
+        alt_text = attrs.get("title") or attrs.get("name") or attrs.get("token") or f"image-{len(token_to_path)}"
+        return f"\n\n![{alt_text}]({token_to_path[token].as_uri()})\n\n"
+
+    rewritten = LARK_IMAGE_TAG_RE.sub(replace_image, markdown)
+    rewritten = LARK_FILE_TAG_RE.sub(lambda match: render_lark_file_reference(match.group(1)), rewritten)
+    rewritten = LARK_WHITEBOARD_TAG_RE.sub(lambda match: render_lark_whiteboard_reference(match.group(1)), rewritten)
+    rewritten = re.sub(r"\n{3,}", "\n\n", rewritten)
+    return rewritten.strip()
+
+
+def stage_lark_doc_source(doc_url: str) -> Tuple[tempfile.TemporaryDirectory, Path, Optional[str]]:
+    markdown, title = fetch_lark_doc(doc_url)
+    temp_dir = tempfile.TemporaryDirectory(prefix="wechat-mp-lark-")
+    stage_root = Path(temp_dir.name)
+    rewritten = materialize_lark_doc_assets(markdown, stage_root / "assets")
+    markdown_path = stage_root / "article.md"
+    markdown_path.write_text(rewritten, encoding="utf-8")
+    return temp_dir, markdown_path, title or None
+
+
+def run_node_to_markdown(extra_args: list[str], stdin_text: Optional[str] = None) -> str:
+    if not URL_RENDERER.exists():
+        raise WeChatPublishError("缺少 url_to_markdown.mjs，无法转换网页/HTML")
+    try:
+        completed = subprocess.run(
+            ["node", str(URL_RENDERER), *extra_args],
+            input=stdin_text,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError as exc:
+        raise WeChatPublishError("需要 Node.js 才能抓取网页或转换 HTML") from exc
+    if completed.returncode != 0:
+        raise WeChatPublishError((completed.stderr or completed.stdout or "网页/HTML 转换失败").strip())
+    markdown = (completed.stdout or "").strip()
+    if not markdown:
+        raise WeChatPublishError("网页/HTML 正文提取为空")
+    return markdown
+
+
+def html_to_markdown(html_text: str) -> str:
+    return run_node_to_markdown([], stdin_text=html_text)
+
+
+def stage_url_source(url: str) -> Tuple[tempfile.TemporaryDirectory, Path, Optional[str]]:
+    markdown = run_node_to_markdown(["--url", url])
+    temp_dir = tempfile.TemporaryDirectory(prefix="wechat-mp-url-")
+    markdown_path = Path(temp_dir.name) / "article.md"
+    markdown_path.write_text(markdown, encoding="utf-8")
+    return temp_dir, markdown_path, None
+
+
 def run_web_publish(
     args: argparse.Namespace,
     title: str,
@@ -269,12 +517,15 @@ def run_web_publish(
     else:
         env["WECHAT_MP_CONTENT"] = args.content or ""
 
-    command = [
-        "npx",
-        "--prefix",
-        str(ROOT_DIR),
-        "playwright",
+    playwright_bin = ROOT_DIR / "node_modules" / ".bin" / "playwright"
+    if playwright_bin.exists():
+        command = [str(playwright_bin)]
+    else:
+        command = ["npx", "--prefix", str(ROOT_DIR), "playwright"]
+    command += [
         "test",
+        "-c",
+        str(WEB_SPEC_PATH.parent),
         str(WEB_SPEC_PATH),
         "--headed",
         "--workers=1",
@@ -336,7 +587,71 @@ def text_to_html(content: str) -> str:
     return "\n".join(blocks)
 
 
+def render_markdown_with_wenyan(content: str) -> Optional[str]:
+    """Render markdown to 公众号 HTML via @wenyan-md/core; return None to fall back."""
+    if not WENYAN_RENDERER.exists():
+        return None
+    tmp_path: Optional[str] = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        completed = subprocess.run(
+            ["node", str(WENYAN_RENDERER), tmp_path],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError:
+        return None  # node 未安装，回退内置排版
+    except OSError:
+        return None
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "wenyan 渲染失败").strip()
+        sys.stderr.write(f"[wenyan] 渲染失败，回退到内置排版：{message}\n")
+        return None
+    html_output = (completed.stdout or "").strip()
+    return html_output if "<" in html_output else None
+
+
+def list_wenyan_themes() -> int:
+    if not WENYAN_RENDERER.exists():
+        raise WeChatPublishError("缺少 render_wenyan.mjs，无法列出主题")
+    try:
+        completed = subprocess.run(
+            ["node", str(WENYAN_RENDERER), "--list-themes"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError as exc:
+        raise WeChatPublishError("需要 Node.js 才能列出 wenyan 主题") from exc
+    if completed.returncode != 0:
+        raise WeChatPublishError((completed.stderr or "列出主题失败").strip())
+    print(completed.stdout.strip())
+    return 0
+
+
 def markdown_to_wechat_html(content: str) -> str:
+    body = strip_front_matter(content)
+    if os.getenv("WECHAT_MP_DISABLE_WENYAN", "").strip() != "1":
+        rendered = render_markdown_with_wenyan(body)
+        if rendered:
+            return rendered
+    return markdown_to_html_builtin(body)
+
+
+def markdown_to_html_builtin(content: str) -> str:
     lines = content.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     output = []
     paragraph_lines = []
@@ -507,6 +822,15 @@ def render_image(src: str, alt: str, title: str) -> str:
     alt_attr = html.escape(alt or title or "image")
     title_attr = html.escape(title or alt or "")
     caption = f'<figcaption style="margin-top: 0.5em; color: #888; font-size: 13px; text-align: center;">{title_attr}</figcaption>' if title_attr else ""
+    if src.startswith("file://"):
+        local_path = urllib.parse.unquote(urllib.parse.urlparse(src).path)
+        label = html.escape(title or alt or Path(local_path).name or "本地图片")
+        return (
+            '<figure style="margin: 1.2em 0; text-align: center;">'
+            + f'<span data-local-src="{html.escape(local_path)}" data-local-alt="{alt_attr}" style="display: inline-block; padding: 0.9em 1.1em; border: 1px dashed #d0d7de; border-radius: 6px; color: #57606a; font-size: 14px;">{label}</span>'
+            + caption
+            + "</figure>"
+        )
     return (
         '<figure style="margin: 1.2em 0; text-align: center;">'
         + f'<img src="{src}" alt="{alt_attr}" style="max-width: 100%; height: auto; border-radius: 6px;"/>'
@@ -632,13 +956,50 @@ def extract_article_url(publish_response: dict) -> str:
 
 
 def main() -> int:
+    staged_source: Optional[tempfile.TemporaryDirectory] = None
     try:
         args = parse_args()
+        if args.theme:
+            os.environ["WECHAT_MP_THEME"] = args.theme.strip()
+        if args.hl_theme:
+            os.environ["WECHAT_MP_HL_THEME"] = args.hl_theme.strip()
+        if args.reflow:
+            os.environ["WECHAT_MP_REFLOW"] = "1"
+        if args.no_cover:
+            os.environ["WECHAT_MP_SKIP_COVER"] = "1"
+        if args.list_themes:
+            return list_wenyan_themes()
+        validate_input_source(args)
+        publish_mode = resolve_publish_mode(args)
+        staged_title = None
+        if args.doc_url:
+            if publish_mode == "api":
+                raise WeChatPublishError("飞书文档 URL 当前仅支持 web 模式发布，以保证图片可正确上传到公众号")
+            staged_source, staged_path, staged_title = stage_lark_doc_source(args.doc_url)
+            args.content = None
+            args.content_file = str(staged_path)
+            if args.content_format == "auto":
+                args.content_format = "markdown"
+        if args.url:
+            staged_source, staged_path, staged_title = stage_url_source(args.url)
+            args.content = None
+            args.content_file = str(staged_path)
+            if args.content_format == "auto":
+                args.content_format = "markdown"
+        if not args.theme and not os.getenv("WECHAT_MP_THEME"):
+            try:
+                theme_source, _ = read_source(args)
+            except Exception:
+                theme_source = ""
+            auto_theme, auto_hl = resolve_series_theme(theme_source)
+            if auto_theme:
+                os.environ["WECHAT_MP_THEME"] = auto_theme
+            if auto_hl and not os.getenv("WECHAT_MP_HL_THEME"):
+                os.environ["WECHAT_MP_HL_THEME"] = auto_hl
         raw_content, content, source_path, extracted_title = read_content(args)
-        title = resolve_title(args, raw_content, source_path, extracted_title)
+        title = resolve_title(args, raw_content, source_path, staged_title or extracted_title)
         author = resolve_author(args)
         digest = args.digest.strip() or build_digest(content)
-        publish_mode = resolve_publish_mode(args)
 
         if args.render_only:
             print(content)
@@ -686,6 +1047,9 @@ def main() -> int:
     except WeChatPublishError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    finally:
+        if staged_source is not None:
+            staged_source.cleanup()
 
 
 if __name__ == "__main__":

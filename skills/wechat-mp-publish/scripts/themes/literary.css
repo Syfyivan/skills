@@ -1,0 +1,163 @@
+/*
+ * 文学风 (literary) —— 文颜自定义公众号主题
+ * 配色取自博客「AI 与 Agent 大寓言课」课程页，让公众号文章与博客互相呼应。
+ * 选择器全部挂在 #wenyan 下；var() 会被 wenyan 解析成字面值后内联。
+ */
+:root {
+  --ink: #1d2127;
+  --text: #2d333a;
+  --muted: #6b7480;
+  --line: #e6e2d9;
+  --wash: #f6f7f5;
+  --red: #b73a2c;
+  --blue: #3f5d7e;
+  --green: #2f765f;
+}
+
+#wenyan {
+  font-size: 16px;
+  line-height: 1.9;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+
+#wenyan p {
+  margin: 1.25em 0;
+}
+
+/* 一级标题：居中、稳重 */
+#wenyan h1 {
+  text-align: center;
+  font-size: 1.5em;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0.2em 0 1.2em;
+}
+
+/* 二级标题：左红竖条 + 底部细线（不用 ::before 伪元素，粘进公众号不跑形） */
+#wenyan h2 {
+  font-size: 1.28em;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 2em 0 1em;
+  padding: 0.1em 0 0.4em 0.7em;
+  border-left: 4px solid var(--red);
+  border-bottom: 1px solid var(--line);
+}
+
+/* 三级标题：蓝色，左内边距对齐 */
+#wenyan h3 {
+  font-size: 1.15em;
+  font-weight: 700;
+  color: var(--blue);
+  margin: 1.6em 0 0.8em;
+  padding-left: 0.1em;
+}
+
+/* 强调：红色加粗 */
+#wenyan strong {
+  color: var(--red);
+  font-weight: 700;
+}
+
+/* 斜体改作「重点句」：绿色字 + 绿色虚线下划（呼应文学排版） */
+#wenyan em {
+  font-style: normal;
+  color: var(--green);
+  border-bottom: 1px dashed var(--green);
+  padding-bottom: 1px;
+}
+
+/* 链接：蓝色 + 浅实线下划 */
+#wenyan a {
+  color: var(--blue);
+  border-bottom: 1px solid #c4d0de;
+  word-wrap: break-word;
+}
+
+/* 引用：左竖条 + 淡底 + 留白 */
+#wenyan blockquote {
+  margin: 1.4em 0;
+  padding: 0.8em 1.1em;
+  border-left: 3px solid var(--green);
+  background: var(--wash);
+  color: var(--muted);
+  border-radius: 0 6px 6px 0;
+}
+#wenyan blockquote p {
+  margin: 0.4em 0;
+}
+
+/* 列表 */
+#wenyan ul,
+#wenyan ol {
+  margin: 1em 0;
+  padding-left: 1.4em;
+}
+#wenyan li {
+  margin: 0.4em 0;
+}
+#wenyan li::marker {
+  color: var(--red);
+}
+
+/* 行内代码 */
+#wenyan p code,
+#wenyan li code {
+  color: var(--red);
+  background: var(--wash);
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 0.92em;
+  word-break: break-all;
+}
+
+/* 代码块 */
+#wenyan pre {
+  margin: 1.2em 0;
+  border-radius: 8px;
+  background: #f6f8fa;
+}
+
+/* 图片：圆角居中 + 题注 */
+#wenyan img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0.4em auto;
+  border-radius: 8px;
+}
+#wenyan figcaption {
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85em;
+  margin-top: 0.4em;
+}
+
+/* 分割线：居中虚线 */
+#wenyan hr {
+  border: none;
+  border-top: 1px dashed var(--line);
+  margin: 2.2em 0;
+}
+
+/* 表格：表头淡底 + 斑马纹 + 细线 */
+#wenyan table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1.4em 0;
+  font-size: 0.92em;
+}
+#wenyan th,
+#wenyan td {
+  border: 1px solid var(--line);
+  padding: 0.5em 0.8em;
+}
+#wenyan th {
+  background: var(--wash);
+  color: var(--ink);
+  font-weight: 700;
+}
+#wenyan tr:nth-child(2n) td {
+  background: #fafbfa;
+}
