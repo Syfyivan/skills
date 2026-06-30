@@ -76,3 +76,10 @@ node publish-cli.mjs wechat-send --appmsgid 100000123 --post --no-masssend
 ## 直接请求边界
 
 “Mock 请求”不是 mock 本地数据，而是重放平台的真实认证请求。可以作为后续优化方向，但必须先捕获真实 endpoint、cookie、CSRF/token、签名参数、请求顺序和扫码后的状态机，并能从平台成功页/API 回读验证。未完成 API discovery 前，默认走网页自动化；不要伪造响应骗过本地脚本，也不要尝试绕过真人扫码/风控验证。
+
+`request_trace.cjs` 可挂到发布脚本上记录最终发布阶段的真实请求/响应，输出 JSONL，敏感 header 和常见 token 参数会脱敏。CSDN/掘金 `--post` 已接入：
+
+- `csdn-publish/scripts/csdn_publish_requests.jsonl`
+- `juejin-publish/scripts/juejin_publish_requests.jsonl`
+
+如果自动点击或人工点击触发了请求，先看这些抓包日志，再决定是否把稳定 endpoint 封装成 direct replay。不要在没有真实请求样本时硬编码接口。

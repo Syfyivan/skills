@@ -36,6 +36,7 @@ const POST = process.argv.includes('--post');
 // Playwright-bundled Chromium resolver (shared module; see _publish_core/chromium.cjs).
 const { resolveChromium } = require('../../_publish_core/chromium.cjs');
 const exe = resolveChromium;
+const { attachPublishTrace } = require('../../_publish_core/request_trace.cjs');
 function log(s) { fs.appendFileSync(path.join(OUT, 'csdn_publish.txt'), s + '\n'); }
 
 // Lark fallback notifier (CC-only bot, sends a clickable card to the operator).
@@ -219,6 +220,7 @@ async function fillSummary(page, summary) {
   const ctx = await chromium.launchPersistentContext(userDataDir, { headless: false, viewport: { width: 1440, height: 900 }, executablePath: exe() });
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: ORIGIN }).catch(() => {});
   const page = ctx.pages()[0] || (await ctx.newPage());
+  if (POST) attachPublishTrace(page, { outDir: OUT, basename: 'csdn_publish_requests', hostPattern: /csdn\.net/i, log });
   await page.goto(WRITE_URL, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(4000);
   log('url=' + page.url());

@@ -14,8 +14,24 @@ const APPMSGID = process.env.APPMSGID || '100000118';
 const { resolveChromium } = require('../../_publish_core/chromium.cjs');
 const exe = resolveChromium;
 function log(s) { fs.appendFileSync(path.join(OUT, 'do_publish.txt'), s + '\n'); }
-function notifyLark(msg) { try { execFileSync('node', [path.join(ROOT, 'notify_lark.cjs'), msg], { timeout: 30000, stdio: 'ignore' }); } catch (_) {} }
-async function shot(page, n) { await page.screenshot({ path: path.join(OUT, n) }).catch(() => {}); }
+function notifyLark(msg, opts = {}) {
+  const args = [path.join(ROOT, 'notify_lark.cjs'), msg];
+  if (opts.imagePath) args.push('--image', opts.imagePath);
+  try {
+    const out = execFileSync('node', args, { timeout: 45000, encoding: 'utf8', maxBuffer: 1 << 20 });
+    log('notify_lark ok: ' + out.trim().replace(/\s+/g, ' | '));
+    return true;
+  } catch (e) {
+    const detail = (e.stderr || e.stdout || e.message || String(e)).toString().trim();
+    log('notify_lark failed: ' + detail.slice(0, 500));
+    return false;
+  }
+}
+async function shot(page, n) {
+  const p = path.join(OUT, n);
+  await page.screenshot({ path: p }).catch((e) => log('screenshot failed ' + n + ': ' + e.message));
+  return fs.existsSync(p) ? p : '';
+}
 async function clickVisible(page, sels, t = 12000) {
   const dl = Date.now() + t;
   while (Date.now() < dl) {
@@ -106,9 +122,9 @@ async function pollSuccess(page, secs) {
         return r.width > 80 && r.height > 80 && r.width < 420 && Math.abs(r.width - r.height) < 60;
       })).catch(() => false);
       if (realScan) {
-        await shot(page, 'pub_scan_qr.png');
+        const qrPath = await shot(page, 'pub_scan_qr.png');
         log('微信验证二维码出现 — 请在屏幕上用微信扫码（最多等 180 秒）');
-        notifyLark('【公众号·待扫码】发表需微信验证：请到打开的浏览器里用微信扫二维码完成发表（限 180 秒）。');
+        notifyLark('【公众号·待扫码】发表需微信验证：请用微信扫描下方二维码完成发表（限 180 秒）。', { imagePath: qrPath });
         const sr = await pollSuccess(page, 180);
         outcome = sr === 'success' ? 'success' : 'scan-timeout';
         break;

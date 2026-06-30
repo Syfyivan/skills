@@ -89,6 +89,7 @@ node scripts/csdn_publish.cjs --content-file /abs/article.md --post \
 - **新版标题 DOM**：如果标题 input 不可见，不要直接判未登录；先看 `.article-bar__title-display`/`.article-bar__input-box` 和 markdown 编辑器是否存在，再点击标题展示区打开 input。
 - **新版发布面板 DOM**：发布弹窗根节点常见为 `modal__inner-1 modal__publish-article`；摘要 textarea 是 `textarea.el-textarea__inner`，placeholder 文案为「本内容会在各展现列表中展示...若不填，则默认提取正文前256个字。」；最终按钮为 `button.btn-b-red` 文案「发布文章」。
 - **三级兜底发布**：locator 点面板「发布文章」→ 坐标点(模板右下，坐标**近似、待核对**，`CSDN_COORD_CLICK=0` 可关)→ 都不行则 `notifyLark('【CSDN·待发布】...editor.csdn.net/md/')` 并保持窗口让人工点(轮询 ≤300s)。
+- **最终发布请求抓包**：`--post` 会启用 `request_trace.cjs`，把 CSDN 域名下发布阶段的请求/响应写到 `csdn_publish_requests.jsonl`（敏感头/token 脱敏）。如果自动或人工点击触发了真实请求，先用这个文件判断 direct replay 是否可行；不要未抓包就硬编码私有接口。
 - **判成功**：url 变文章详情 `blog.csdn.net/<user>/article/details/<id>`，或 `mp.csdn.net/.../success`，或页面出现「发布成功/发表成功」。
 - **PREPARE 是默认**：不传 `--post` 只填不发，保持窗口给人审核(`CSDN_PREPARE_HOLD` 秒)。发布对外不可撤，务必人工确认后再 `--post`。
 - **内容硬要求**：正文里**不得出现“公众号”或任何跨平台引流**。

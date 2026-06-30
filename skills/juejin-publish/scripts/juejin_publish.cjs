@@ -26,6 +26,7 @@ const ORIGIN = 'https://juejin.cn';
 // Playwright-bundled Chromium resolver (shared module; see _publish_core/chromium.cjs).
 const { resolveChromium } = require('../../_publish_core/chromium.cjs');
 const exe = resolveChromium;
+const { attachPublishTrace } = require('../../_publish_core/request_trace.cjs');
 function log(s) { fs.appendFileSync(path.join(OUT, 'juejin_publish.txt'), s + '\n'); }
 const NOTIFY = path.resolve(ROOT, '..', '..', 'wechat-mp-publish', 'scripts', 'notify_lark.cjs');
 function notifyLark(msg) { try { execFileSync('node', [NOTIFY, msg], { timeout: 30000, stdio: 'ignore' }); } catch (_) {} }
@@ -65,6 +66,7 @@ function stripFM(md) { return md.replace(/^﻿?---[ \t]*\r?\n[\s\S]*?\r?\n---[ \
   const ctx = await chromium.launchPersistentContext(userDataDir, { headless: false, viewport: { width: 1440, height: 900 }, executablePath: exe() });
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: ORIGIN }).catch(() => {});
   const page = ctx.pages()[0] || (await ctx.newPage());
+  if (POST) attachPublishTrace(page, { outDir: OUT, basename: 'juejin_publish_requests', hostPattern: /juejin\.cn/i, log });
   await page.goto(EDITOR_URL, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(4000);
   log('url=' + page.url());

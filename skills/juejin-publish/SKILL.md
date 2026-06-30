@@ -81,6 +81,7 @@ node scripts/juejin_publish.cjs --content-file /abs/article.md --post \
 - **标签 byte-select**：只传 1 个最稳定标签。每个标签 = 点搜索框 → `keyboard.type` → 选第一个含该词的 `byte-select-option`；脚本收到多个标签会只取第一个，避免抽屉状态不稳定。
 - **摘要硬规则**：`--post` 时摘要必须显式传入且至少 50 字；超过 100 字脚本截断到 100 字。不要用正文开头截断凑摘要，要写文章收益/冲突/读者能获得什么。
 - **确定并发布可自动**：优先 `getByRole('button',{name:'确定并发布'})`/evaluate 点文本；不行坐标点抽屉右下；都不行 → `notifyLark('【掘金·待发布】文章已填好，请去点发布：https://juejin.cn/editor/drafts/new')` 并**保持窗口人工点**(poll url 变 `juejin.cn/post/<id>` 或出现「发布成功」，≤300s)。
+- **最终发布请求抓包**：`--post` 会启用 `request_trace.cjs`，把掘金域名下发布阶段的请求/响应写到 `juejin_publish_requests.jsonl`（敏感头/token 脱敏）。如果自动或人工点击触发了真实请求，先看这个文件确认 endpoint、状态码、响应结果，再考虑封装 direct replay；不要未抓包就猜私有接口。
 - **PREPARE 是默认**：不传 `--post` 只填标题+正文，停在页面给人审核(掘金自动存草稿，进「我的-草稿箱」)。发布是对外不可撤动作，务必人工确认后再 `--post`。
 - **未登录**：写文章页没有标题框即未登录，脚本 `exit 2`(与统一 CLI 约定一致)，先跑 `juejin_login.cjs` 扫码。
 - **内容硬要求**：正文里**不得出现“公众号”或任何跨平台引流**。

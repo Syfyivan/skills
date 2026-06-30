@@ -117,7 +117,7 @@ python3 scripts/publish_wechat_mp.py --list-themes
 
 发表到二维码那步，可把二维码发到运营者飞书、手机扫。前提：给应用开**机器人(bot)能力**并具 `im:message`/图片权限（app secret 已配，`lark-cli config show` 可见）。开通前用屏幕扫码即可。
 
-当前默认能力：脚本会在本地保存二维码截图（如 `pub_scan_qr.png`）并发一条「待扫码」飞书文本/卡片提醒；**不要在没有图片上传成功日志时声称二维码图片已发到飞书**。若要真正发二维码图片，需要给 bot 补齐图片上传权限、实现上传图片消息，并在日志里记录上传/发送结果。
+当前能力：脚本会在本地保存二维码截图（如 `pub_scan_qr.png`），调用 `notify_lark.cjs --image <二维码路径>` 先发「待扫码」文本/卡片，再上传图片并发送图片消息。日志里会写 `notify_lark ok: sent ... | sent image ...`；如果缺 `im:resource` 或图片上传失败，会写 `notify_lark failed: ...`，此时仍以屏幕扫码为准。
 
 ## 调试原则：DOM/日志优先，截图只做视觉证据
 

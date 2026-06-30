@@ -5,6 +5,7 @@
 // 用法:
 //   node notify_lark.cjs "文本（含 https://链接 会被自动抽出来做成按钮）"
 //   node notify_lark.cjs "文本" --url https://... --title "标题"
+//   node notify_lark.cjs "文本" --image /abs/path/qr.png
 // 配置（均有默认）:
 //   CC_LARK_APP_ID       默认 cli_a90a2f201b799bc9（CC 专用 bot，与 Codex 桥接 app 隔离）
 //   CC_LARK_SECRET_FILE  默认 ~/.cc-lark-secret（app_secret，600，不入库）
@@ -24,10 +25,12 @@ const CHAT_ID = process.env.CC_LARK_CHAT_ID || '';
 const argv = process.argv.slice(2);
 let urlFlag = '';
 let titleFlag = '';
+let imagePath = '';
 const rest = [];
 for (let i = 0; i < argv.length; i += 1) {
   if (argv[i] === '--url') urlFlag = argv[++i] || '';
   else if (argv[i] === '--title') titleFlag = argv[++i] || '';
+  else if (argv[i] === '--image') imagePath = argv[++i] || '';
   else rest.push(argv[i]);
 }
 const text = rest.join(' ').trim() || '(empty)';
@@ -40,6 +43,40 @@ function curlPost(u, headers, body) {
   for (const h of headers) args.push('-H', h);
   args.push('-d', body);
   return execFileSync('curl', args, { encoding: 'utf8', maxBuffer: 1 << 20 });
+}
+
+function curlMultipart(u, headers, fields) {
+  const args = ['-s', '-m', '30', '-X', 'POST', u];
+  for (const h of headers) args.push('-H', h);
+  for (const f of fields) args.push('-F', f);
+  return execFileSync('curl', args, { encoding: 'utf8', maxBuffer: 4 << 20 });
+}
+
+function sendMessage(tt, receiveId, idType, msgType, content) {
+  const body = JSON.stringify({ receive_id: receiveId, msg_type: msgType, content });
+  const resp = curlPost(
+    `https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=${idType}`,
+    ['Content-Type: application/json', `Authorization: Bearer ${tt}`],
+    body,
+  );
+  const r = JSON.parse(resp);
+  if (r.code !== 0) throw new Error('send message failed: ' + resp);
+  return r.data && r.data.message_id;
+}
+
+function uploadImage(tt, filePath) {
+  const abs = fs.realpathSync(filePath);
+  const st = fs.statSync(abs);
+  if (!st.isFile() || st.size <= 0) throw new Error('image file is empty or not a file: ' + abs);
+  const resp = curlMultipart(
+    'https://open.feishu.cn/open-apis/im/v1/images',
+    [`Authorization: Bearer ${tt}`],
+    ['image_type=message', `image=@${abs}`],
+  );
+  const r = JSON.parse(resp);
+  const key = r && r.data && r.data.image_key;
+  if (r.code !== 0 || !key) throw new Error('upload image failed: ' + resp);
+  return key;
 }
 
 function main() {
@@ -76,17 +113,16 @@ function main() {
     content = JSON.stringify({ text });
   }
 
-  const body = JSON.stringify({ receive_id: receiveId, msg_type: msgType, content });
-  const resp = curlPost(
-    `https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=${idType}`,
-    ['Content-Type: application/json', `Authorization: Bearer ${tt}`],
-    body,
-  );
-  const r = JSON.parse(resp);
-  if (r.code === 0) {
-    console.log('sent', msgType, r.data && r.data.message_id);
-  } else {
-    console.error('FAIL', resp);
+  try {
+    const msgId = sendMessage(tt, receiveId, idType, msgType, content);
+    console.log('sent', msgType, msgId);
+    if (imagePath) {
+      const imageKey = uploadImage(tt, imagePath);
+      const imageMsgId = sendMessage(tt, receiveId, idType, 'image', JSON.stringify({ image_key: imageKey }));
+      console.log('sent image', imageMsgId);
+    }
+  } catch (e) {
+    console.error('FAIL', e && e.message ? e.message : e);
     process.exit(1);
   }
 }
