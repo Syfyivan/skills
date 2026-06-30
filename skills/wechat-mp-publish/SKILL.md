@@ -36,27 +36,46 @@ node ../_publish_core/title.mjs --title "你选的标题" --platform wechat
 ```
 `ok=true` 直接用；`ok=false`（被截断/超长）重写更短的钩子；`warnings` 提示加问号/感叹号时酌情补。最终标题用 `--title "..."` 传给下面的发布脚本。
 
+## 发布前：封面 prompt + 摘要高光句（必做）
+
+每次发布都必须从正文里单独提炼这两段，不能让脚本默认从开头截取：
+
+- **封面 prompt**：用故事梗概或高光时刻描述画面，优先写主角、场景、冲突、情绪和视觉风格；明确排除无关截图、网页 UI、随机文字。长度尽量控制在 120 字内，用 `--cover-prompt "..."` 传入。
+- **摘要高光句**：不是 frontmatter description，也不是正文第一段截断；要写成公众号列表里能抓人的一句话，点出冲突/悬念/收益但不剧透，控制在 120 字内，用 `--digest "..."` 传入。
+
+示例：
+```bash
+--cover-prompt "温暖寓言插画，不要文字和网页截图：秋收谷仓里，学徒阿禾面对旧谷筐和陌生山外新谷，老把式在旁指点；突出训练、泛化与过拟合。"
+--digest "旧谷筐都分对了，山外新谷一来就露馅。机器学习真正要学会的，不是背答案，而是遇到新题也能判断。"
+```
+
 ## 也可用统一 CLI（一条命令发本平台）
 
 ```bash
-node ../publish-cli.mjs wechat --file /abs/article.md --title "..." [--theme lapis]   # 存草稿
-node ../publish-cli.mjs wechat --file /abs/article.md --post                          # 发布
+node ../publish-cli.mjs wechat --file /abs/article.md --title "..." --cover-prompt "..." --digest "..." [--theme lapis]   # 存草稿
+node ../publish-cli.mjs wechat --file /abs/article.md --post --title "..." --cover-prompt "..." --digest "..."             # 发布
 node ../publish-cli.mjs wechat-send --appmsgid <草稿id> --post [--no-masssend]        # 群发/仅发表已有草稿
 ```
 详见 `../_publish_core/README.md`。
 
 ## 常用命令
 
-存草稿（自动按系列选主题、AI 封面、摘要取 frontmatter `description`）：
+存草稿（自动按系列选主题；封面 prompt 和摘要高光句必须显式传入）：
 ```bash
 python3 scripts/publish_wechat_mp.py --publish-mode web --action draft \
-  --content-file /abs/path/article.md
+  --content-file /abs/path/article.md \
+  --title "..." \
+  --cover-prompt "..." \
+  --digest "..."
 ```
 
 发表（群发优先，失败回退仅发表；到二维码请屏幕扫码）：
 ```bash
 python3 scripts/publish_wechat_mp.py --publish-mode web --action publish \
-  --content-file /abs/path/article.md
+  --content-file /abs/path/article.md \
+  --title "..." \
+  --cover-prompt "..." \
+  --digest "..."
 ```
 
 传博客链接 / 仅发表不推送 / 指定主题 / 不动封面：
