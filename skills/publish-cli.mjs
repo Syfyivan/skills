@@ -21,7 +21,6 @@ const SCRIPTS = {
   wechat: path.join(CLI_DIR, 'wechat-mp-publish', 'scripts', 'publish_wechat_mp.py'),
   wechatSend: path.join(CLI_DIR, 'wechat-mp-publish', 'scripts', 'do_publish.cjs'),
   xhsGen: path.join(CLI_DIR, 'xiaohongshu-cards', 'scripts', 'gen_cards.mjs'),
-  xhsPublish: path.join(CLI_DIR, 'xiaohongshu-cards', 'scripts', 'xhs_publish.cjs'),
   zhihu: path.join(CLI_DIR, 'zhihu-publish', 'scripts', 'zhihu_publish.cjs'),
   csdn: path.join(CLI_DIR, 'csdn-publish', 'scripts', 'csdn_publish.cjs'),
   juejin: path.join(CLI_DIR, 'juejin-publish', 'scripts', 'juejin_publish.cjs'),
@@ -192,7 +191,7 @@ function runWechatSend(opts) {
   };
 }
 
-// 小红书：先 gen_cards 出卡片图(纯本地，无需登录)，再 xhs_publish 填好(默认不发)。
+// 小红书：只生成本地卡片图。不要用浏览器自动登录/上传/发布，避免账号风控预警。
 function runXiaohongshu(opts, { withinAll = false } = {}) {
   const file = path.resolve(opts.file);
   const cardsDir = opts.out ? path.resolve(opts.out) : path.join(path.dirname(file), 'xhs-cards');
@@ -226,25 +225,21 @@ function runXiaohongshu(opts, { withinAll = false } = {}) {
   }
   if (cardsInfo) process.stderr.write(`[xiaohongshu] 已生成 ${cardsInfo.cards} 张卡片 -> ${artifact}\n`);
 
-  // step 2: 填发布页(PREPARE；--post 才真发，all 内强制不发)
   const post = opts.post && !withinAll;
-  const pubArgs = [SCRIPTS.xhsPublish, '--content-file', file, '--cards-dir', cardsDir];
-  if (opts.title) pubArgs.push('--title', opts.title);
-  if (post) pubArgs.push('--post');
-  const pub = run('node', pubArgs, { capture: false });
-  const ok = !pub.error && pub.status === 0;
   return {
     platform: 'xiaohongshu',
-    ok,
-    step: post ? 'GEN_CARDS+POST' : 'GEN_CARDS+PREPARE',
-    command: showCmd('node', pubArgs),
-    exitCode: pub.status,
+    ok: !post,
+    step: post ? 'GEN_CARDS_ONLY_POST_BLOCKED' : 'GEN_CARDS_ONLY',
+    command: showCmd('node', genArgs),
+    exitCode: post ? 3 : 0,
     artifact, // 卡片图目录
     draft: null,
-    note: spawnNote(pub) || readResultLog(path.join(path.dirname(SCRIPTS.xhsPublish), 'xhs_publish.txt')),
+    note: post
+      ? '小红书账号已出现第三方工具/脚本预警，已阻止自动上传/发布。'
+      : '小红书卡片图已本地生成；请用官方 App/网页手动上传发布。',
     nextStep: post
-      ? '已尝试发布(以 xhs_publish 日志为准)。'
-      : `卡片图在 ${artifact}，发布页已填好未发。人工审核后真发：node publish-cli.mjs xiaohongshu --file <md> --post`,
+      ? `卡片图在 ${artifact}。为避免账号继续预警，请人工打开小红书官方发布入口上传这些图片并粘贴文案。`
+      : `卡片图在 ${artifact}。请人工打开小红书官方发布入口上传这些图片并粘贴标题/正文/标签。`,
   };
 }
 
@@ -343,7 +338,7 @@ function runJuejin(opts, { withinAll = false } = {}) {
   };
 }
 
-// all：依次 wechat(草稿)、xiaohongshu/zhihu/csdn/juejin(填好不发)。为安全起见忽略 --post。
+// all：依次 wechat(草稿)、xiaohongshu(本地卡片)、zhihu/csdn/juejin(填好不发)。为安全起见忽略 --post。
 function runAll(opts) {
   return [
     runWechat(opts, { withinAll: true }),
@@ -366,16 +361,16 @@ function printHelp() {
 platform:
   wechat        公众号：渲染 markdown -> 存草稿(默认)；--post 改为 web 直接发布
   wechat-send   公众号群发：把已有草稿群发/发表(真发，需 --post 才执行)
-  xiaohongshu   小红书：生成卡片图 + 填发布页(默认不发)；--post 才真发
+  xiaohongshu   小红书：只生成本地卡片图；不再自动打开/上传/发布，避免账号风控
   zhihu         知乎：填标题+正文到草稿(默认不发)；--post 才真发
   csdn          CSDN：填标题+正文到编辑器(默认不发)；--post 才真发
   juejin        掘金：填标题+正文到草稿(默认不发)；--post 才真发
-  all           依次跑 wechat(草稿)+小红书+知乎+csdn+掘金(均不真发)，强制不真发
+  all           依次跑 wechat(草稿)+小红书本地卡片+知乎/csdn/掘金(均不真发)，强制不真发
 
 通用选项:
   --file <md>            文章 markdown 路径(wechat/xiaohongshu/zhihu/all 必填)
   --title "..."          自定义标题(透传给对应脚本)
-  --post                 真发开关。默认不传 = 不真发(草稿/填好不发/预览)
+  --post                 真发开关。默认不传 = 不真发(草稿/预览)；小红书会阻止 --post
   --help, -h             显示本帮助
 
 按平台透传的选项:
@@ -409,11 +404,11 @@ function checkScripts(platform) {
   const need = {
     wechat: [SCRIPTS.wechat],
     'wechat-send': [SCRIPTS.wechatSend],
-    xiaohongshu: [SCRIPTS.xhsGen, SCRIPTS.xhsPublish],
+    xiaohongshu: [SCRIPTS.xhsGen],
     zhihu: [SCRIPTS.zhihu],
     csdn: [SCRIPTS.csdn],
     juejin: [SCRIPTS.juejin],
-    all: [SCRIPTS.wechat, SCRIPTS.xhsGen, SCRIPTS.xhsPublish, SCRIPTS.zhihu, SCRIPTS.csdn, SCRIPTS.juejin],
+    all: [SCRIPTS.wechat, SCRIPTS.xhsGen, SCRIPTS.zhihu, SCRIPTS.csdn, SCRIPTS.juejin],
   }[platform] || [];
   for (const s of need) if (!fs.existsSync(s)) fail(`找不到发布脚本：${s}`);
 }

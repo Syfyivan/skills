@@ -6,7 +6,7 @@
 //   node gen_cards.mjs --content-file post.md [--out dir] [--theme literary]
 //                      [--title ...] [--hook ...] [--series ...] [--account 前端x学习笔记]
 //
-// 输出：<out>/card-01.png（封面）, card-02.png ...（正文，自动分页）, 末页（引流）。
+// 输出：<out>/card-01.png（封面）, card-02.png ...（正文，自动分页）, 末页（站内互动，不跨平台引流）。
 
 import { marked } from 'marked';
 import { chromium } from 'playwright';

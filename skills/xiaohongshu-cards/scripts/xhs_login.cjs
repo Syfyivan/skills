@@ -1,4 +1,8 @@
-// 小红书创作平台：扫码登录一次，持久化到 .xiaohongshu-browser；登录后抓发布页结构。
+// 小红书创作平台旧登录/诊断入口。
+//
+// 账号已出现“小红书疑似使用第三方工具或脚本自动浏览/查看/发布”的预警，
+// 所以默认禁止继续用浏览器自动化打开创作平台。保留此脚本只用于受控排障；
+// 如确需临时运行，必须显式设置 XHS_ALLOW_BROWSER_AUTOMATION=1。
 const { chromium } = require('playwright/test');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -14,6 +18,11 @@ function log(s) { fs.appendFileSync(path.join(OUT, 'xhs_login.txt'), s + '\n'); 
 
 (async () => {
   fs.writeFileSync(path.join(OUT, 'xhs_login.txt'), 'XHS LOGIN\n');
+  if (process.env.XHS_ALLOW_BROWSER_AUTOMATION !== '1') {
+    log('BLOCKED: 小红书账号已出现第三方工具/脚本预警，默认禁止浏览器自动登录/浏览/诊断。请只生成卡片图并人工发布。');
+    console.error('小红书浏览器自动化已禁用：请使用 gen_cards.mjs 只生成卡片图，再人工上传发布。');
+    process.exit(3);
+  }
   fs.mkdirSync(userDataDir, { recursive: true });
   const ctx = await chromium.launchPersistentContext(userDataDir, { headless: false, viewport: { width: 1440, height: 900 }, executablePath: exe() });
   const page = ctx.pages()[0] || (await ctx.newPage());

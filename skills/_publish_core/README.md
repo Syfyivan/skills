@@ -16,7 +16,7 @@
   `validateTitle(title, platform)` → `{ok, title, warnings}`，platform ∈ `wechat`(≤64) / `xiaohongshu`(≤20) / `zhihu`(≤100) / `csdn`(≤100) / `juejin`(≤100)。
   CLI：`node title.mjs --title "..." --platform <p>`。
 - 飞书通知 `notify_lark.cjs` 在 `../wechat-mp-publish/scripts/`（CC 专用 bot，**私聊**带按钮卡片；
-  发布要人工那步给运营者发可点链接）。三平台脚本已接：公众号扫码 / 小红书发布 / 知乎发布。
+  发布要人工那步给运营者发可点链接）。注意：小红书因账号风控预警已改为只生成本地素材，不再接自动发布提醒。
 
 ## 取标题：每次发布前必做
 
@@ -33,7 +33,7 @@
 | 吸睛标题 | 所有平台 `--title` | 先出 3 个候选，再用 `title.mjs` 按平台校验 |
 | 公众号封面 prompt | `wechat --cover-prompt` | 用故事梗概或高光时刻描述画面；包含主角、场景、冲突、情绪、风格；排除网页截图/UI/随机文字 |
 | 公众号摘要高光句 | `wechat --digest` | 不是正文开头截断；写成列表里能抓人的一句，≤120 字 |
-| 小红书 hook/body | `gen_cards --hook` / `xhs_publish --body` | 第一眼要有冲突或收益；禁止跨平台引流 |
+| 小红书 hook/body | 人工发布文案 | 第一眼要有冲突或收益；禁止跨平台引流；不调用浏览器自动上传/发布 |
 | CSDN 摘要 | `csdn --summary` | 概括文章收益，避免平台引流 |
 | 掘金分类/标签/摘要 | `juejin --category --tags --summary` | 分类必选；标签只传 1 个；摘要 50-100 字 |
 
@@ -51,11 +51,11 @@ node publish-cli.mjs --help
 |---|---|---|---|
 | `wechat` | 渲染 md → 存公众号草稿 | web 直接发布 | `--title --theme --hl-theme --url --no-cover --digest --cover-prompt --author`（`--url` 可代替 `--file`） |
 | `wechat-send` | 只预览不执行（安全闸门） | 群发/发表已有草稿 | `--appmsgid <id>`、`--no-masssend`（仅发表不推送） |
-| `xiaohongshu` | 生成卡片图 + 填发布页（不发） | 真发 | `--theme(literary\|blue) --title --out` |
+| `xiaohongshu` | 只生成本地卡片图 | 阻断（不自动发布） | `--theme(literary\|blue) --title --out` |
 | `zhihu` | 填标题+正文到草稿（不发） | 真发 | `--title --topic` |
 | `csdn` | 填标题+正文到编辑器（不发） | 真发 | `--title --tags --column --summary` |
 | `juejin` | 填标题+正文到草稿（不发） | 真发 | `--title --category --tags(单个) --summary(50-100字) --column` |
-| `all` | wechat 草稿 + 小红书/知乎填好不发 | 恒忽略 --post（永不真发） | `--title` 等 |
+| `all` | wechat 草稿 + 小红书本地卡片 + 知乎/CSDN/掘金填好不发 | 恒忽略 --post（永不真发） | `--title` 等 |
 
 约定：默认全部「不真发」；`wechat-send` 底层运行即真发，故必须 `--post` 才执行；`all` 永远忽略 `--post`（要真发请逐平台单独执行）。输出汇总 JSON：每平台 `{ok, step, command, artifact/draft, nextStep}`；参数错误退出码 2、执行失败 1、成功 0。
 
@@ -63,6 +63,7 @@ node publish-cli.mjs --help
 # 不真发（联调/审核）
 node publish-cli.mjs all --file post.md
 node publish-cli.mjs wechat --file post.md --theme lapis
+node publish-cli.mjs xiaohongshu --file post.md --out /tmp/xhs-cards
 # 真发（逐平台、确认后）
 node publish-cli.mjs zhihu --file post.md --post
 node publish-cli.mjs juejin --file post.md --post --category 人工智能 --tags 机器学习 --summary "50 到 100 字摘要..."

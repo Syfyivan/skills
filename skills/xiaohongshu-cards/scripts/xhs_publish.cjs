@@ -1,4 +1,8 @@
-// 小红书图文发布：上传卡片图 + 填标题/正文/话题。默认只填好不发(供审核)；--post 才真正发布。
+// 小红书图文发布旧入口：上传卡片图 + 填标题/正文/话题。
+//
+// 账号已出现“小红书疑似使用第三方工具或脚本自动浏览/查看/发布”的预警，
+// 所以默认禁止继续用浏览器自动化打开/上传/发布。保留此脚本只用于受控排障；
+// 如确需临时运行，必须显式设置 XHS_ALLOW_BROWSER_AUTOMATION=1。
 const { chromium } = require('playwright/test');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -26,6 +30,11 @@ function parseFrontMatter(md) {
 
 (async () => {
   fs.writeFileSync(path.join(OUT, 'xhs_publish.txt'), 'XHS PUBLISH (' + (POST ? 'POST' : 'PREPARE') + ')\n');
+  if (process.env.XHS_ALLOW_BROWSER_AUTOMATION !== '1') {
+    log('BLOCKED: 小红书账号已出现第三方工具/脚本预警，默认禁止浏览器自动上传/发布。请只生成卡片图并人工发布。');
+    console.error('小红书浏览器自动化已禁用：请使用 gen_cards.mjs 只生成卡片图，再人工上传发布。');
+    process.exit(3);
+  }
   const file = arg('--content-file');
   const attrs = file ? parseFrontMatter(fs.readFileSync(file, 'utf-8')) : {};
   const fullTitle = arg('--title', attrs.title || '');
