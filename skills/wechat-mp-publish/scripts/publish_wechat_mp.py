@@ -529,6 +529,8 @@ def run_web_publish(
         str(WEB_SPEC_PATH),
         "--headed",
         "--workers=1",
+        "--output",
+        os.environ.get("WECHAT_MP_PW_OUTPUT_DIR", "/private/tmp/pw-wechat"),
     ]
 
     completed = subprocess.run(command, env=env)
@@ -642,8 +644,35 @@ def list_wenyan_themes() -> int:
     return 0
 
 
+def delink_markdown(text: str) -> str:
+    """公众号不支持正文外链跳转，将 Markdown 链接转为纯文字。
+
+    - 图片链接 ![alt](url) -> alt（去掉图片语法，保留描述）
+    - 站内相对链接 [文字](/path) 或 (#anchor) -> 文字（仅保留文字）
+    - 外部链接 [文字](http...) -> 文字（url） 保留出处但不可跳转
+    可通过环境变量 WECHAT_MP_KEEP_LINKS=1 关闭本行为。
+    """
+    if os.getenv("WECHAT_MP_KEEP_LINKS", "").strip() == "1":
+        return text
+
+    text = re.sub(r"!\[([^\]]*)\]\(([^\)]*)\)", r"\1", text)
+
+    def _replace(match):
+        label = match.group(1).strip()
+        url = match.group(2).strip()
+        if re.match(r"^(https?:)?//", url) or url.startswith("www."):
+            if label:
+                return f"{label}（{url}）"
+            return url
+        return label
+
+    text = re.sub(r"\[([^\]]+)\]\(([^\)\s]+)\)", _replace, text)
+    return text
+
+
 def markdown_to_wechat_html(content: str) -> str:
     body = strip_front_matter(content)
+    body = delink_markdown(body)
     if os.getenv("WECHAT_MP_DISABLE_WENYAN", "").strip() != "1":
         rendered = render_markdown_with_wenyan(body)
         if rendered:

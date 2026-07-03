@@ -637,6 +637,9 @@ test('publish wechat mp article via web ui', async () => {
           coverSource = 'first-local-image';
         }
       }
+      if (optionalEnv('WECHAT_MP_REQUIRE_COVER') === '1' && coverSource === 'none') {
+        throw new Error('WECHAT_MP_REQUIRE_COVER=1 but no cover was set');
+      }
     }
     let result;
     let finalAction = action;
